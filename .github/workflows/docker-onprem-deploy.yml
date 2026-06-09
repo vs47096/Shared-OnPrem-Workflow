@@ -1,0 +1,188 @@
+name: Shared On-Prem Deployment Template
+
+on:
+  workflow_call:
+    inputs:
+      PROFILE:
+        required: true
+        type: string
+      PORT:
+        required: true
+        type: string
+    secrets:
+      SERVER_HOST:
+        required: true
+      SERVER_USER:
+        required: true
+      SERVER_SSH_KEY:
+        required: true
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+      SERVER_DB_USERNAME:
+        required: true
+      SERVER_DB_PASSWORD:
+        required: true
+      JWT_SECRET:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+    outputs:
+      project_name: ${{ steps.build_image.outputs.project_name }}
+
+    steps:
+      - name: 'Checkout code'
+        uses: actions/checkout@v3
+
+      - name: 'Cache Maven dependencies'
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-
+
+      - name: 'Set up JDK 11'
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: 'Build with Maven'
+        run: mvn clean package -DskipTests -P${{ inputs.PROFILE }}
+
+      - name: 'Set up Docker Buildx'
+        uses: docker/setup-buildx-action@v3
+
+      - name: 'Login to Docker Hub'
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 'Build and Push Container Image'
+        id: build_image
+        shell: bash
+        run: |
+          set -e
+          PROJECT_NAME=$(basename "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${PROJECT_NAME}:latest"
+      
+          docker buildx build \
+            --tag "$IMAGE_NAME" \
+            --build-arg PROFILE_ENV_ARG="${{ inputs.PROFILE }}" \
+            --build-arg PORT_ENV_ARG="${{ inputs.PORT }}" \
+            --push .
+
+          echo "project_name=$PROJECT_NAME" | tee -a $GITHUB_OUTPUT
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+    env:
+      DEPLOY_ENV: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+      PROJECT_NAME: ${{ needs.build.outputs.project_name }}
+      SSH_CMD: "ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+    steps:
+      - name: 'Install Cloudflare CLI'
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+
+      - name: 'Load SSH Private Key'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: 'Configure Cloudflare SSH Tunnel Proxy'
+        run: |
+          mkdir -p ~/.ssh
+          cat <<EOF >> ~/.ssh/config
+          Host ${{ secrets.SERVER_HOST }}
+            ProxyCommand cloudflared access ssh --hostname %h
+          EOF
+
+      - name: 'Set dynamic container variables'
+        id: set-vars
+        run: |
+          PROJECT_NAME_LOWER="${{ env.PROJECT_NAME }}"
+          DEPLOY_ENV_LOWER=$(echo "${{ env.DEPLOY_ENV }}" | tr '[:upper:]' '[:lower:]')
+
+          if [ "${DEPLOY_ENV_LOWER}" = "prod" ]; then
+            CONTAINER_NAME="${PROJECT_NAME_LOWER}"
+            OLD_CONTAINER_NAME="${PROJECT_NAME_LOWER}_old"
+          else
+            CONTAINER_NAME="${PROJECT_NAME_LOWER}-${DEPLOY_ENV_LOWER}"
+            OLD_CONTAINER_NAME="${PROJECT_NAME_LOWER}-${DEPLOY_ENV_LOWER}_old"
+          fi
+
+          echo "CONTAINER_NAME=$CONTAINER_NAME" >> $GITHUB_ENV
+          echo "OLD_CONTAINER_NAME=$OLD_CONTAINER_NAME" >> $GITHUB_ENV
+
+      - name: 'Pull, rename, and clean up remote image'
+        run: |
+          TAG_NAME="${{ env.CONTAINER_NAME }}:latest"
+          REMOTE_IMAGE="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.PROJECT_NAME }}:latest"
+      
+          # Using quote-safe Multi-line execution strings to pass to Windows OpenSSH
+          ${{ env.SSH_CMD }} "cmd /c \"docker pull $REMOTE_IMAGE && docker tag $REMOTE_IMAGE $TAG_NAME && docker rmi $REMOTE_IMAGE && (echo y | docker image prune)\""
+
+      - name: 'Stop and Rename Existing Container'
+        run: |
+          CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
+          OLD_CONTAINER_NAME="${{ env.OLD_CONTAINER_NAME }}"
+          ${{ env.SSH_CMD }} "cmd /c \"docker ps -a --format {{.Names}} | findstr /i ${CONTAINER_NAME} >nul 2>&1 && (docker stop ${CONTAINER_NAME} >nul 2>&1 && docker rename ${CONTAINER_NAME} ${OLD_CONTAINER_NAME}) || echo Clean State.\""
+
+      - name: 'Run New Container'
+        run: |
+          CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
+          ${{ env.SSH_CMD }} "cmd /c \"docker run --name ${CONTAINER_NAME} -d -p ${{ inputs.PORT }}:${{ inputs.PORT }} \
+            --restart unless-stopped \
+            -e SPRING_DATASOURCE_USERNAME=${{ secrets.SERVER_DB_USERNAME }} \
+            -e SPRING_DATASOURCE_PASSWORD=${{ secrets.SERVER_DB_PASSWORD }} \
+            -e SERVER_HOST=${{ secrets.SERVER_HOST }} \
+            -e SPRING_PORT=${{ inputs.PORT }} \
+            -e SPRING_JWT_SECRET=${{ secrets.JWT_SECRET }} \
+            -e spring_profile=${{ inputs.PROFILE }} \
+            ${CONTAINER_NAME}:latest\""
+
+      - name: 'Wait before health checks'
+        run: sleep 10
+
+      - name: 'Health Check (Local via SSH)'
+        run: |
+          ${{ env.SSH_CMD }} "cmd /c \"curl -s -o nul -w %%%{http_code} http://localhost:${{ inputs.PORT }}/actuator/health\"" > result.txt
+          RESPONSE=$(cat result.txt | tr -d '\r')
+          if [ "$RESPONSE" -ne 200 ]; then exit 1; fi
+
+      - name: 'Rollback: Restart Old Container'
+        if: failure()
+        run: |
+          CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
+          OLD_CONTAINER_NAME="${{ env.OLD_CONTAINER_NAME }}"
+          ${{ env.SSH_CMD }} "cmd /v:on /c \"(docker ps -a --format {{.Names}} ^| findstr /i ${OLD_CONTAINER_NAME} >nul 2>&1) && (docker stop ${CONTAINER_NAME} >nul 2>&1 && docker rm -f ${CONTAINER_NAME} >nul 2>&1 && docker rename ${OLD_CONTAINER_NAME} ${CONTAINER_NAME} && docker start ${CONTAINER_NAME}) || echo No rollback target.\""
+      
+      - name: 'Server Cleanup'
+        if: always()
+        run: |
+          ${{ env.SSH_CMD }} "cmd /v:on /c \"for /f %C in ('docker ps -a --filter \"status=exited\" --format {{.ID}}') do (docker rm %C) && for /f %I in ('docker images -q') do (docker ps -a --filter ancestor=%I -q >nul 2>&1 || docker rmi %I)\""
+
+  cleanup:
+    runs-on: ubuntu-latest
+    if: always()
+    needs: deploy
+    steps:
+      - name: 'Purge tags from Docker Hub'
+        run: |
+          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST https://hub.docker.com/v2/users/login/ -d '{"username": "'"${{ secrets.DOCKERHUB_USERNAME }}"'", "password": "'"${{ secrets.DOCKERHUB_TOKEN }}"'"}' | jq -r .token)
+          REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ needs.build.outputs.project_name }}"
+          RESPONSE=$(curl -s -H "Authorization: JWT ${TOKEN}" "https://hub.docker.com/v2/repositories/${REPO}/tags/?page_size=100")
+          TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name')
+          for TAG in $TAGS; do
+            curl -s -H "Authorization: JWT ${TOKEN}" -X DELETE "https://hub.docker.com/v2/repositories/${REPO}/tags/${TAG}/" > /dev/null 2>&1
+          done
