@@ -189,16 +189,13 @@ jobs:
           # Step C: Spin up your third script passing along the unique runtime version ID argument
           $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_URI=${{ secrets.ONPREM_SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat ${{ env.CONTAINER_NAME }} ${{ inputs.PORT }} ${{ github.run_id }}\""
       
-      - name: 'Wait before health checks'
-        run: sleep 15
-
       - name: 'Health Check (Local via SSH)'
         id: check
         run: |
-          $SSH_CMD "cmd /c \"curl -s -o nul -w %%%{http_code} http://localhost:${{ inputs.PORT }}/actuator/health\"" > result.txt
-          RESPONSE=$(cat result.txt | tr -d '\r')
-          echo "Health endpoint returned code status: $RESPONSE"
-          if [ "$RESPONSE" -ne 200 ]; then exit 1; fi
+          # Since your shared script repository is pulled down, we can run it using bash over SSH.
+          # We pass the active application port and target container name as variables.
+          
+          $SSH_CMD "bash -s" < devops-scripts/scripts/6-health-check.sh "${{ inputs.PORT }}" "${{ env.CONTAINER_NAME }}"
 
       # SUCCESS POST-ACTION: Clear old assets ONLY if health checks return 200 OK
       - name: 'Commit Successful Deployment & Purge Old Assets'
