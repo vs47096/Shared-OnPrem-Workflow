@@ -183,11 +183,12 @@ jobs:
 
       - name: 'Launch Active Container'
         run: |
-          # Step B: Free up the target port mapping by stopping the old container right before booting the new layer
-          $SSH_CMD "cmd /c \"docker stop ${{ env.OLD_CONTAINER_NAME }} || echo No active container to stop\""
-          
-          # Step C: Spin up your third script passing along the unique runtime version ID argument
-          $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_URI=${{ secrets.ONPREM_SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat ${{ env.CONTAINER_NAME }} ${{ inputs.PORT }} ${{ github.run_id }}\""
+            # Step B: Free up the target port mapping by stopping the old container right before booting the new layer
+            $SSH_CMD "cmd /c \"docker stop ${{ env.OLD_CONTAINER_NAME }} || echo No active container to stop\""
+            
+            # Step C: Spin up your third script passing along the unique runtime version ID argument
+            # FIX: Explicitly wrapped parameters in escaped double quotes
+            $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_URI=${{ secrets.ONPREM_SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat \"${{ env.CONTAINER_NAME }}\" \"${{ inputs.PORT }}\" \"${{ github.run_id }}\"\""
       
       - name: 'Health Check (Local via SSH)'
         id: check
