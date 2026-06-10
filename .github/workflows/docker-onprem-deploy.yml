@@ -112,7 +112,7 @@ jobs:
         with:
           repository: vs47096/Shared-OnPrem-Workflow
           path: devops-scripts
-          token: ${{ secrets.DOCKER_PAT }}
+          token: ${{ github.token }}
           
       - name: 'Install Cloudflare CLI'
         run: |
@@ -188,7 +188,7 @@ jobs:
         with:
           repository: vs47096/Shared-OnPrem-Workflow
           path: devops-scripts
-          token: ${{ secrets.DOCKER_PAT }}  # <-- Restores read authentication permissions
+          token: ${{ github.token }}
 
       - name: 'Execute Docker Hub Purge Script'
         run: |
