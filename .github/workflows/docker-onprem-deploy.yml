@@ -2,48 +2,95 @@ name: Shared On-Prem Deployment Template
 
 on:
   workflow_call:
-    inputs:
-      PROFILE:
-        required: true
-        type: string
+   inputs:
       PORT:
         required: true
         type: string
     secrets:
-      SERVER_HOST:
-        required: true
-      SERVER_USER:
-        required: true
-      SERVER_SSH_KEY:
-        required: true
-      DOCKERHUB_USERNAME:
-        required: true
-      DOCKERHUB_TOKEN:
-        required: true
-      SERVER_DB_USERNAME:
-        required: true
-      SERVER_DB_PASSWORD:
-        required: true
-      JWT_SECRET:
+      VAULT_TOKEN:
         required: true
 
 jobs:
+  # ==============================================================================
+  # CENTRALIZED INITIALIZATION JOB
+  # ==============================================================================
+  get-secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      DOCKER_USERNAME: ${{ steps.vault.outputs.DOCKER_USERNAME }}
+      DOCKER_PAT: ${{ steps.vault.outputs.DOCKER_PAT }}
+      DOCKER_REPOSITORY_NAME: ${{ steps.vault.outputs.DOCKER_REPOSITORY_NAME }}
+      SERVER_HOST: ${{ steps.vault.outputs.SERVER_HOST }}
+      SERVER_PORT: ${{ steps.vault.outputs.SERVER_PORT }}
+      SERVER_USER: ${{ steps.vault.outputs.SERVER_USER }}
+      SERVER_DB_USERNAME: ${{ steps.vault.outputs.SERVER_DB_USERNAME }}
+      SERVER_DB_PASSWORD: ${{ steps.vault.outputs.SERVER_DB_PASSWORD }}
+      SERVER_DB_URI: ${{ steps.vault.outputs.SERVER_DB_URI }}
+      JWT_SECRET: ${{ steps.vault.outputs.JWT_SECRET }}
+      SSH_KEY: ${{ steps.vault.outputs.SSH_KEY }}
+      
+    steps:
+      - name: 'Get Secrets from Vault'
+        id: vault
+        env:
+          GH_TOKEN: ${{ secrets.VAULT_TOKEN }}
+        run: |
+          CENTRAL_REPO="vs47096/Shared-OnPrem-Workflow"
+          echo "Connecting to Shared-OnPrem-Workflow secrets vault..."
+          
+          # 1. Fetch values safely
+          D_USER=$(gh secret get DOCKER_USERNAME -R $CENTRAL_REPO)
+          D_PAT=$(gh secret get DOCKER_PAT -R $CENTRAL_REPO)
+          D_REPO=$(gh secret get DOCKER_REPOSITORY_NAME -R $CENTRAL_REPO)
+          S_HOST=$(gh secret get ONPREM_SERVER_SSH_HOST -R $CENTRAL_REPO)
+          S_PORT=$(gh secret get ONPREM_SERVER_SSH_PORT -R $CENTRAL_REPO)
+          S_USER=$(gh secret get ONPREM_SERVER_USER_ADMIN -R $CENTRAL_REPO)
+          DB_USER=$(gh secret get ONPREM_SERVER_DB_USERNAME -R $CENTRAL_REPO)
+          DB_PASS=$(gh secret get ONPREM_SERVER_DB_PASSWORD -R $CENTRAL_REPO)
+          DB_URI=$(gh secret get ONPREM_SERVER_DB_URI -R $CENTRAL_REPO)
+          JWT=$(gh secret get APP_JWT_SECRET -R $CENTRAL_REPO)
+          KEY=$(gh secret get ONPREM_SERVER_SSH_PRIVATE_KEY -R $CENTRAL_REPO)
+
+          # 2. Register outputs securely
+          echo "DOCKER_USERNAME=$D_USER" >> $GITHUB_OUTPUT
+          echo "DOCKER_PAT=$D_PAT" >> $GITHUB_OUTPUT
+          echo "DOCKER_REPOSITORY_NAME=$D_REPO" >> $GITHUB_OUTPUT
+          echo "SERVER_HOST=$S_HOST" >> $GITHUB_OUTPUT
+          echo "SERVER_PORT=$S_PORT" >> $GITHUB_OUTPUT
+          echo "SERVER_USER=$S_USER" >> $GITHUB_OUTPUT
+          echo "SERVER_DB_USERNAME=$DB_USER" >> $GITHUB_OUTPUT
+          echo "SERVER_DB_PASSWORD=$DB_PASS" >> $GITHUB_OUTPUT
+          echo "SERVER_DB_URI=$DB_URI" >> $GITHUB_OUTPUT
+          echo "JWT_SECRET=$JWT" >> $GITHUB_OUTPUT
+          
+          # Handle potential multi-line format for SSH Key output safely
+          echo "SSH_KEY<<EOF" >> $GITHUB_OUTPUT
+          echo "$KEY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  # ==============================================================================
+  # BUILD JOB
+  # ==============================================================================
   build:
+    needs: get-secrets
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+    env:
+      FINAL_PROFILE: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
     outputs:
-      project_name: ${{ steps.build_image.outputs.project_name }}
+      project_name: ${{ steps.get_project.outputs.project_name }}
 
     steps:
       - name: 'Checkout code'
         uses: actions/checkout@v3
-
+        
       - name: 'Cache Maven dependencies'
         uses: actions/cache@v3
         with:
           path: ~/.m2/repository
-          key: maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: maven-
+          key: ${{ github.repository }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ github.repository }}-maven-
 
       - name: 'Set up JDK 11'
         uses: actions/setup-java@v3
@@ -52,7 +99,7 @@ jobs:
           distribution: 'temurin'
 
       - name: 'Build with Maven'
-        run: mvn clean package -DskipTests -P${{ inputs.PROFILE }}
+        run: mvn clean package -DskipTests -P${{ env.FINAL_PROFILE }}
 
       - name: 'Set up Docker Buildx'
         uses: docker/setup-buildx-action@v3
@@ -60,96 +107,97 @@ jobs:
       - name: 'Login to Docker Hub'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ needs.get-secrets.outputs.DOCKER_USERNAME }}
+          password: ${{ needs.get-secrets.outputs.DOCKER_PAT }}
 
       - name: 'Build and Push Container Image'
-        id: build_image
+        id: get_project
         shell: bash
         run: |
           set -e
           PROJECT_NAME=$(basename "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
-          IMAGE_NAME="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${PROJECT_NAME}:latest"
+          IMAGE_NAME="docker.io/${{ needs.get-secrets.outputs.DOCKER_USERNAME }}/${{ needs.get-secrets.outputs.DOCKER_REPOSITORY_NAME }}:latest"
       
           docker buildx build \
             --tag "$IMAGE_NAME" \
-            --build-arg PROFILE_ENV_ARG="${{ inputs.PROFILE }}" \
+            --build-arg PROFILE_ENV_ARG="${{ env.FINAL_PROFILE }}" \
             --build-arg PORT_ENV_ARG="${{ inputs.PORT }}" \
             --push .
 
-          echo "project_name=$PROJECT_NAME" | tee -a $GITHUB_OUTPUT
+          echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
 
+  # ==============================================================================
+  # DEPLOY JOB
+  # ==============================================================================
   deploy:
-    needs: build
+    needs: [get-secrets, build]
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
     env:
       DEPLOY_ENV: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
       PROJECT_NAME: ${{ needs.build.outputs.project_name }}
-      SSH_CMD: "ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
-
+      
     steps:
+      - name: 'Load SSH Key'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ needs.get-secrets.outputs.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: 'Checkout Shared Scripts'
+        uses: actions/checkout@v3
+        with:
+          repository: vs47096/Shared-OnPrem-Workflow
+          path: devops-scripts
+          token: ${{ secrets.VAULT_TOKEN }}
+          
       - name: 'Install Cloudflare CLI'
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: 'Load SSH Private Key'
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
-
       - name: 'Configure Cloudflare SSH Tunnel Proxy'
         run: |
-          mkdir -p ~/.ssh
           cat <<EOF >> ~/.ssh/config
-          Host ${{ secrets.SERVER_HOST }}
+          Host ${{ needs.get-secrets.outputs.SERVER_HOST }}
+            Port ${{ needs.get-secrets.outputs.SERVER_PORT }}
             ProxyCommand cloudflared access ssh --hostname %h
+            IdentityFile ~/.ssh/id_rsa
           EOF
 
-      - name: 'Set dynamic container variables'
-        id: set-vars
+      - name: 'Set container names'
         run: |
           PROJECT_NAME_LOWER="${{ env.PROJECT_NAME }}"
           DEPLOY_ENV_LOWER=$(echo "${{ env.DEPLOY_ENV }}" | tr '[:upper:]' '[:lower:]')
-
           if [ "${DEPLOY_ENV_LOWER}" = "prod" ]; then
-            CONTAINER_NAME="${PROJECT_NAME_LOWER}"
-            OLD_CONTAINER_NAME="${PROJECT_NAME_LOWER}_old"
+            echo "CONTAINER_NAME=${PROJECT_NAME_LOWER}" >> $GITHUB_ENV
+            echo "OLD_CONTAINER_NAME=${PROJECT_NAME_LOWER}_old" >> $GITHUB_ENV
           else
-            CONTAINER_NAME="${PROJECT_NAME_LOWER}-${DEPLOY_ENV_LOWER}"
-            OLD_CONTAINER_NAME="${PROJECT_NAME_LOWER}-${DEPLOY_ENV_LOWER}_old"
+            echo "CONTAINER_NAME=${PROJECT_NAME_LOWER}-${DEPLOY_ENV_LOWER}" >> $GITHUB_ENV
+            echo "OLD_CONTAINER_NAME=${PROJECT_NAME_LOWER}-${DEPLOY_ENV_LOWER}_old" >> $GITHUB_ENV
           fi
-
-          echo "CONTAINER_NAME=$CONTAINER_NAME" >> $GITHUB_ENV
-          echo "OLD_CONTAINER_NAME=$OLD_CONTAINER_NAME" >> $GITHUB_ENV
-
-      - name: 'Pull, rename, and clean up remote image'
-        run: |
-          TAG_NAME="${{ env.CONTAINER_NAME }}:latest"
-          REMOTE_IMAGE="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.PROJECT_NAME }}:latest"
+          
+          # Generate short execution command strings using our centralized secrets references
+          echo "SSH_CMD=ssh -o StrictHostKeyChecking=no -p ${{ needs.get-secrets.outputs.SERVER_PORT }} ${{ needs.get-secrets.outputs.SERVER_USER }}@${{ needs.get-secrets.outputs.SERVER_HOST }}" >> $GITHUB_ENV
+          echo "SCP_CMD=scp -o StrictHostKeyChecking=no -P ${{ needs.get-secrets.outputs.SERVER_PORT }}" >> $GITHUB_ENV
       
-          # Using quote-safe Multi-line execution strings to pass to Windows OpenSSH
-          ${{ env.SSH_CMD }} "cmd /c \"docker pull $REMOTE_IMAGE && docker tag $REMOTE_IMAGE $TAG_NAME && docker rmi $REMOTE_IMAGE && (echo y | docker image prune)\""
-
-      - name: 'Stop and Rename Existing Container'
+      - name: 'Upload Script Assets to Windows Server'
         run: |
-          CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
-          OLD_CONTAINER_NAME="${{ env.OLD_CONTAINER_NAME }}"
-          ${{ env.SSH_CMD }} "cmd /c \"docker ps -a --format {{.Names}} | findstr /i ${CONTAINER_NAME} >nul 2>&1 && (docker stop ${CONTAINER_NAME} >nul 2>&1 && docker rename ${CONTAINER_NAME} ${OLD_CONTAINER_NAME}) || echo Clean State.\""
+          ${{ env.SCP_CMD }} devops-scripts/scripts/*.bat ${{ needs.get-secrets.outputs.SERVER_USER }}@${{ needs.get-secrets.outputs.SERVER_HOST }}:C:/Windows/Temp/
 
-      - name: 'Run New Container'
+      - name: 'Pull & Tag Remote Image'
         run: |
-          CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
-          ${{ env.SSH_CMD }} "cmd /c \"docker run --name ${CONTAINER_NAME} -d -p ${{ inputs.PORT }}:${{ inputs.PORT }} \
-            --restart unless-stopped \
-            -e SPRING_DATASOURCE_USERNAME=${{ secrets.SERVER_DB_USERNAME }} \
-            -e SPRING_DATASOURCE_PASSWORD=${{ secrets.SERVER_DB_PASSWORD }} \
-            -e SERVER_HOST=${{ secrets.SERVER_HOST }} \
-            -e SPRING_PORT=${{ inputs.PORT }} \
-            -e SPRING_JWT_SECRET=${{ secrets.JWT_SECRET }} \
-            -e spring_profile=${{ inputs.PROFILE }} \
-            ${CONTAINER_NAME}:latest\""
+          REMOTE_IMAGE="docker.io/${{ needs.get-secrets.outputs.DOCKER_USERNAME }}/${{ needs.get-secrets.outputs.DOCKER_REPOSITORY_NAME }}:latest"
+          TAG_NAME="${{ env.CONTAINER_NAME }}:latest"
+          ${{ env.SSH_CMD }} "cmd /c \"C:\Windows\Temp\1-pull-image.bat $REMOTE_IMAGE $TAG_NAME\""
+
+      - name: 'Stop & Move Pre-existing Container'
+        run: |
+          ${{ env.SSH_CMD }} "cmd /c \"C:\Windows\Temp\2-stop-container.bat ${{ env.CONTAINER_NAME }} ${{ env.OLD_CONTAINER_NAME }}\""
+
+      - name: 'Launch Active Container'
+        run: |
+          ${{ env.SSH_CMD }} "cmd /c \"set ONPREM_SERVER_DB_URI=${{ needs.get-secrets.outputs.SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ needs.get-secrets.outputs.SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ needs.get-secrets.outputs.SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ needs.get-secrets.outputs.JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat ${{ env.CONTAINER_NAME }} ${{ inputs.PORT }}\""
 
       - name: 'Wait before health checks'
         run: sleep 10
@@ -160,17 +208,10 @@ jobs:
           RESPONSE=$(cat result.txt | tr -d '\r')
           if [ "$RESPONSE" -ne 200 ]; then exit 1; fi
 
-      - name: 'Rollback: Restart Old Container'
-        if: failure()
-        run: |
-          CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
-          OLD_CONTAINER_NAME="${{ env.OLD_CONTAINER_NAME }}"
-          ${{ env.SSH_CMD }} "cmd /v:on /c \"(docker ps -a --format {{.Names}} ^| findstr /i ${OLD_CONTAINER_NAME} >nul 2>&1) && (docker stop ${CONTAINER_NAME} >nul 2>&1 && docker rm -f ${CONTAINER_NAME} >nul 2>&1 && docker rename ${OLD_CONTAINER_NAME} ${CONTAINER_NAME} && docker start ${CONTAINER_NAME}) || echo No rollback target.\""
-      
-      - name: 'Server Cleanup'
+      - name: 'Post-Deployment Server Cleanup'
         if: always()
         run: |
-          ${{ env.SSH_CMD }} "cmd /v:on /c \"for /f %C in ('docker ps -a --filter \"status=exited\" --format {{.ID}}') do (docker rm %C) && for /f %I in ('docker images -q') do (docker ps -a --filter ancestor=%I -q >nul 2>&1 || docker rmi %I)\""
+          ${{ env.SSH_CMD }} "cmd /c \"C:\Windows\Temp\4-cleanup.bat && del C:\Windows\Temp\*.bat\""
 
   cleanup:
     runs-on: ubuntu-latest
