@@ -8,7 +8,7 @@ echo =======================================================
 echo Target Image: %REMOTE_IMAGE%
 echo Local Tag:    %TAG_NAME%
 
-docker pull %REMOTE_IMAGE%
+docker --config C:\Windows\Temp\ pull %REMOTE_IMAGE%
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to pull image from Docker Hub.
     exit /b 1
