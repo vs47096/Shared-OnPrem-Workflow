@@ -169,10 +169,13 @@ jobs:
           
       - name: 'Pull & Tag Remote Image'
         run: |
-          REMOTE_IMAGE="docker.io/${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_REPOSITORY_NAME }}:latest"
+          # FIX: Changed from :latest to :${{ github.run_id }}
+          REMOTE_IMAGE="docker.io/${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_REPOSITORY_NAME }}:${{ github.run_id }}"
           TAG_NAME="${{ env.CONTAINER_NAME }}:${{ github.run_id }}"
-          $SSH_CMD "cmd /c \"C:\Windows\Temp\1-pull-image.bat $REMOTE_IMAGE $TAG_NAME\""
-
+          
+          # We pass the isolated custom config file directly to the pull engine to bypass Windows Session locks
+          $SSH_CMD "cmd /c \"docker --config C:\Windows\Temp pull $REMOTE_IMAGE && docker tag $REMOTE_IMAGE $TAG_NAME\""
+      
       - name: 'Isolate Pre-existing Container'
         run: |
           # Step A: Safe-rename the old running container to '_old' to unlock the active name slot
