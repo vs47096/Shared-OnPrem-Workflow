@@ -6,7 +6,7 @@ on:
       PORT:
         required: true
         type: string
-    secrets:
+  secrets:
       VAULT_TOKEN:
         required: true
 
