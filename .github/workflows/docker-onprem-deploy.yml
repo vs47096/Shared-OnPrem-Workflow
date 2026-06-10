@@ -149,7 +149,7 @@ jobs:
 
       - name: 'Authenticate Remote Docker Engine'
         run: |
-          $SSH_CMD "cmd /c \"docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PAT }}\""
+          $SSH_CMD "cmd /c \"docker --config C:\Windows\Temp\.docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PAT }}\""
 
       - name: 'Pull & Tag Remote Image'
         run: |
