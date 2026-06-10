@@ -6,73 +6,36 @@ on:
       PORT:
         required: true
         type: string
+    # Directly defining the required infrastructure secrets inside the template
     secrets:
-      VAULT_TOKEN:
+      DOCKER_USERNAME:
+        required: true
+      DOCKER_PAT:
+        required: true
+      DOCKER_REPOSITORY_NAME:
+        required: true
+      ONPREM_SERVER_SSH_HOST:
+        required: true
+      ONPREM_SERVER_SSH_PORT:
+        required: true
+      ONPREM_SERVER_USER_ADMIN:
+        required: true
+      ONPREM_SERVER_DB_USERNAME:
+        required: true
+      ONPREM_SERVER_DB_PASSWORD:
+        required: true
+      ONPREM_SERVER_DB_URI:
+        required: true
+      APP_JWT_SECRET:
+        required: true
+      ONPREM_SERVER_SSH_PRIVATE_KEY:
         required: true
 
 jobs:
   # ==============================================================================
-  # CENTRALIZED INITIALIZATION JOB
-  # ==============================================================================
-  get-secrets:
-    runs-on: ubuntu-latest
-    outputs:
-      DOCKER_USERNAME: ${{ steps.vault.outputs.DOCKER_USERNAME }}
-      DOCKER_PAT: ${{ steps.vault.outputs.DOCKER_PAT }}
-      DOCKER_REPOSITORY_NAME: ${{ steps.vault.outputs.DOCKER_REPOSITORY_NAME }}
-      SERVER_HOST: ${{ steps.vault.outputs.SERVER_HOST }}
-      SERVER_PORT: ${{ steps.vault.outputs.SERVER_PORT }}
-      SERVER_USER: ${{ steps.vault.outputs.SERVER_USER }}
-      SERVER_DB_USERNAME: ${{ steps.vault.outputs.SERVER_DB_USERNAME }}
-      SERVER_DB_PASSWORD: ${{ steps.vault.outputs.SERVER_DB_PASSWORD }}
-      SERVER_DB_URI: ${{ steps.vault.outputs.SERVER_DB_URI }}
-      JWT_SECRET: ${{ steps.vault.outputs.JWT_SECRET }}
-      SSH_KEY: ${{ steps.vault.outputs.SSH_KEY }}
-      
-    steps:
-      - name: 'Get Secrets from Vault'
-        id: vault
-        env:
-          GH_TOKEN: ${{ secrets.VAULT_TOKEN }}
-        run: |
-          CENTRAL_REPO="vs47096/Shared-OnPrem-Workflow"
-          echo "Connecting to Shared-OnPrem-Workflow secrets vault..."
-          
-          # 1. Fetch values safely
-          D_USER=$(gh secret get DOCKER_USERNAME -R $CENTRAL_REPO)
-          D_PAT=$(gh secret get DOCKER_PAT -R $CENTRAL_REPO)
-          D_REPO=$(gh secret get DOCKER_REPOSITORY_NAME -R $CENTRAL_REPO)
-          S_HOST=$(gh secret get ONPREM_SERVER_SSH_HOST -R $CENTRAL_REPO)
-          S_PORT=$(gh secret get ONPREM_SERVER_SSH_PORT -R $CENTRAL_REPO)
-          S_USER=$(gh secret get ONPREM_SERVER_USER_ADMIN -R $CENTRAL_REPO)
-          DB_USER=$(gh secret get ONPREM_SERVER_DB_USERNAME -R $CENTRAL_REPO)
-          DB_PASS=$(gh secret get ONPREM_SERVER_DB_PASSWORD -R $CENTRAL_REPO)
-          DB_URI=$(gh secret get ONPREM_SERVER_DB_URI -R $CENTRAL_REPO)
-          JWT=$(gh secret get APP_JWT_SECRET -R $CENTRAL_REPO)
-          KEY=$(gh secret get ONPREM_SERVER_SSH_PRIVATE_KEY -R $CENTRAL_REPO)
-
-          # 2. Register outputs securely
-          echo "DOCKER_USERNAME=$D_USER" >> $GITHUB_OUTPUT
-          echo "DOCKER_PAT=$D_PAT" >> $GITHUB_OUTPUT
-          echo "DOCKER_REPOSITORY_NAME=$D_REPO" >> $GITHUB_OUTPUT
-          echo "SERVER_HOST=$S_HOST" >> $GITHUB_OUTPUT
-          echo "SERVER_PORT=$S_PORT" >> $GITHUB_OUTPUT
-          echo "SERVER_USER=$S_USER" >> $GITHUB_OUTPUT
-          echo "SERVER_DB_USERNAME=$DB_USER" >> $GITHUB_OUTPUT
-          echo "SERVER_DB_PASSWORD=$DB_PASS" >> $GITHUB_OUTPUT
-          echo "SERVER_DB_URI=$DB_URI" >> $GITHUB_OUTPUT
-          echo "JWT_SECRET=$JWT" >> $GITHUB_OUTPUT
-          
-          # Handle potential multi-line format for SSH Key output safely
-          echo "SSH_KEY<<EOF" >> $GITHUB_OUTPUT
-          echo "$KEY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-  # ==============================================================================
   # BUILD JOB
   # ==============================================================================
   build:
-    needs: get-secrets
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
     env:
@@ -107,8 +70,8 @@ jobs:
       - name: 'Login to Docker Hub'
         uses: docker/login-action@v2
         with:
-          username: ${{ needs.get-secrets.outputs.DOCKER_USERNAME }}
-          password: ${{ needs.get-secrets.outputs.DOCKER_PAT }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PAT }}
 
       - name: 'Build and Push Container Image'
         id: get_project
@@ -116,7 +79,7 @@ jobs:
         run: |
           set -e
           PROJECT_NAME=$(basename "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
-          IMAGE_NAME="docker.io/${{ needs.get-secrets.outputs.DOCKER_USERNAME }}/${{ needs.get-secrets.outputs.DOCKER_REPOSITORY_NAME }}:latest"
+          IMAGE_NAME="docker.io/${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_REPOSITORY_NAME }}:latest"
       
           docker buildx build \
             --tag "$IMAGE_NAME" \
@@ -130,7 +93,7 @@ jobs:
   # DEPLOY JOB
   # ==============================================================================
   deploy:
-    needs: [get-secrets, build]
+    needs: build
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
     env:
@@ -141,7 +104,7 @@ jobs:
       - name: 'Load SSH Key'
         run: |
           mkdir -p ~/.ssh
-          echo "${{ needs.get-secrets.outputs.SSH_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.ONPREM_SERVER_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
       - name: 'Checkout Shared Scripts'
@@ -149,7 +112,6 @@ jobs:
         with:
           repository: vs47096/Shared-OnPrem-Workflow
           path: devops-scripts
-          token: ${{ secrets.VAULT_TOKEN }}
           
       - name: 'Install Cloudflare CLI'
         run: |
@@ -159,8 +121,8 @@ jobs:
       - name: 'Configure Cloudflare SSH Tunnel Proxy'
         run: |
           cat <<EOF >> ~/.ssh/config
-          Host ${{ needs.get-secrets.outputs.SERVER_HOST }}
-            Port ${{ needs.get-secrets.outputs.SERVER_PORT }}
+          Host ${{ secrets.ONPREM_SERVER_SSH_HOST }}
+            Port ${{ secrets.ONPREM_SERVER_SSH_PORT }}
             ProxyCommand cloudflared access ssh --hostname %h
             IdentityFile ~/.ssh/id_rsa
           EOF
@@ -177,62 +139,60 @@ jobs:
             echo "OLD_CONTAINER_NAME=${PROJECT_NAME_LOWER}-${DEPLOY_ENV_LOWER}_old" >> $GITHUB_ENV
           fi
           
-          # Generate short execution command strings using our centralized secrets references
-          echo "SSH_CMD=ssh -o StrictHostKeyChecking=no -p ${{ needs.get-secrets.outputs.SERVER_PORT }} ${{ needs.get-secrets.outputs.SERVER_USER }}@${{ needs.get-secrets.outputs.SERVER_HOST }}" >> $GITHUB_ENV
-          echo "SCP_CMD=scp -o StrictHostKeyChecking=no -P ${{ needs.get-secrets.outputs.SERVER_PORT }}" >> $GITHUB_ENV
+          echo "SSH_CMD=ssh -o StrictHostKeyChecking=no -p ${{ secrets.ONPREM_SERVER_SSH_PORT }} ${{ secrets.ONPREM_SERVER_USER_ADMIN }}@${{ secrets.ONPREM_SERVER_SSH_HOST }}" >> $GITHUB_ENV
+          echo "SCP_CMD=scp -o StrictHostKeyChecking=no -P ${{ secrets.ONPREM_SERVER_SSH_PORT }}" >> $GITHUB_ENV
       
       - name: 'Upload Script Assets to Windows Server'
         run: |
-          ${{ env.SCP_CMD }} devops-scripts/scripts/*.bat ${{ needs.get-secrets.outputs.SERVER_USER }}@${{ needs.get-secrets.outputs.SERVER_HOST }}:C:/Windows/Temp/
+          $SCP_CMD devops-scripts/scripts/*.bat ${{ secrets.ONPREM_SERVER_USER_ADMIN }}@${{ secrets.ONPREM_SERVER_SSH_HOST }}:C:/Windows/Temp/
 
       - name: 'Pull & Tag Remote Image'
         run: |
-          REMOTE_IMAGE="docker.io/${{ needs.get-secrets.outputs.DOCKER_USERNAME }}/${{ needs.get-secrets.outputs.DOCKER_REPOSITORY_NAME }}:latest"
+          REMOTE_IMAGE="docker.io/${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_REPOSITORY_NAME }}:latest"
           TAG_NAME="${{ env.CONTAINER_NAME }}:latest"
-          ${{ env.SSH_CMD }} "cmd /c \"C:\Windows\Temp\1-pull-image.bat $REMOTE_IMAGE $TAG_NAME\""
+          $SSH_CMD "cmd /c \"C:\Windows\Temp\1-pull-image.bat $REMOTE_IMAGE $TAG_NAME\""
 
       - name: 'Stop & Move Pre-existing Container'
         run: |
-          ${{ env.SSH_CMD }} "cmd /c \"C:\Windows\Temp\2-stop-container.bat ${{ env.CONTAINER_NAME }} ${{ env.OLD_CONTAINER_NAME }}\""
+          $SSH_CMD "cmd /c \"C:\Windows\Temp\2-stop-container.bat ${{ env.CONTAINER_NAME }} ${{ env.OLD_CONTAINER_NAME }}\""
 
       - name: 'Launch Active Container'
         run: |
-          ${{ env.SSH_CMD }} "cmd /c \"set ONPREM_SERVER_DB_URI=${{ needs.get-secrets.outputs.SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ needs.get-secrets.outputs.SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ needs.get-secrets.outputs.SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ needs.get-secrets.outputs.JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat ${{ env.CONTAINER_NAME }} ${{ inputs.PORT }}\""
+          $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_URI=${{ secrets.ONPREM_SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat ${{ env.CONTAINER_NAME }} ${{ inputs.PORT }}\""
 
       - name: 'Wait before health checks'
         run: sleep 10
 
       - name: 'Health Check (Local via SSH)'
         run: |
-          ${{ env.SSH_CMD }} "cmd /c \"curl -s -o nul -w %%%{http_code} http://localhost:${{ inputs.PORT }}/actuator/health\"" > result.txt
+          $SSH_CMD "cmd /c \"curl -s -o nul -w %%%{http_code} http://localhost:${{ inputs.PORT }}/actuator/health\"" > result.txt
           RESPONSE=$(cat result.txt | tr -d '\r')
           if [ "$RESPONSE" -ne 200 ]; then exit 1; fi
 
       - name: 'Post-Deployment Server Cleanup'
         if: always()
         run: |
-          ${{ env.SSH_CMD }} "cmd /c \"C:\Windows\Temp\4-cleanup.bat && del C:\Windows\Temp\*.bat\""
-
+          $SSH_CMD "cmd /c \"C:\Windows\Temp\4-cleanup.bat && del C:\Windows\Temp\*.bat\""
+  
+  # ==============================================================================
+  # CLEANUP JOB
+  # ==============================================================================
   cleanup:
     runs-on: ubuntu-latest
     if: always()
-    # Depends on get-secrets to get credentials, and deploy to ensure it runs at the very end
-    needs: [get-secrets, deploy]
+    needs: [build, deploy]
     steps:
-      # Checkout the shared scripts from your DevOps repo down to this Linux runner
       - name: 'Checkout Shared Scripts'
         uses: actions/checkout@v3
         with:
           repository: vs47096/Shared-OnPrem-Workflow
           path: devops-scripts
-          token: ${{ secrets.VAULT_TOKEN }}
 
-      # Execute your new clean shell script directly on the Linux runner environment
       - name: 'Execute Docker Hub Purge Script'
         run: |
           chmod +x devops-scripts/scripts/5-dockerhub-cleanup.sh
           
           ./devops-scripts/scripts/5-dockerhub-cleanup.sh \
-            "${{ needs.get-secrets.outputs.DOCKER_USERNAME }}" \
-            "${{ needs.get-secrets.outputs.DOCKER_PAT }}" \
-            "${{ needs.get-secrets.outputs.DOCKER_REPOSITORY_NAME }}"
+            "${{ secrets.DOCKER_USERNAME }}" \
+            "${{ secrets.DOCKER_PAT }}" \
+            "${{ secrets.DOCKER_REPOSITORY_NAME }}"
