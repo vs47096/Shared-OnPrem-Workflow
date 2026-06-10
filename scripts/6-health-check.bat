@@ -3,7 +3,7 @@ set PORT=%1
 set CONTAINER_NAME=%2
 
 echo =======================================================
-echo      Activating Application Health Monitor Layer
+echo [Step 4/4] Activating Application Health Monitor Layer
 echo =======================================================
 echo Targeting Endpoint: http://localhost:%PORT%/actuator/health
 echo Monitoring Container: %CONTAINER_NAME%
@@ -15,7 +15,6 @@ set ATTEMPT=1
 echo Checking application status (Attempt %ATTEMPT%/%MAX_ATTEMPTS%)...
 
 :: Use native Windows curl. We extract just the HTTP status code. 
-:: If curl hits a connection drop/empty reply, we route the error to nul and handle a blank string.
 for /f "delims=" %%i in ('curl -s -o nul -w "%%{http_code}" http://localhost:%PORT%/actuator/health 2^>nul') do set HTTP_CODE=%%i
 
 :: If curl fails completely and returns nothing, force it to 000
@@ -31,7 +30,10 @@ if "%HTTP_CODE%"=="200" (
 if %ATTEMPT% geq %MAX_ATTEMPTS% goto :Failed
 
 echo Application not ready yet. Retrying in 5 seconds...
-timeout /t 5 /nobreak >nul
+
+:: FIX: Using ping instead of timeout to safely sleep for 5 seconds over non-interactive SSH
+ping 127.0.0.1 -n 6 >nul
+
 set /a ATTEMPT+=1
 goto :Loop
 
