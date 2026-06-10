@@ -2,11 +2,11 @@ name: Shared On-Prem Deployment Template
 
 on:
   workflow_call:
-   inputs:
+    inputs:
       PORT:
         required: true
         type: string
-  secrets:
+    secrets:
       VAULT_TOKEN:
         required: true
 
