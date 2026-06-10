@@ -79,7 +79,7 @@ jobs:
         run: |
           set -e
           PROJECT_NAME=$(basename "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
-          IMAGE_NAME="docker.io/${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_REPOSITORY_NAME }}:latest"
+          IMAGE_NAME="docker.io/${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_REPOSITORY_NAME }}:${{ github.run_id }}"
       
           docker buildx build \
             --tag "$IMAGE_NAME" \
@@ -173,23 +173,45 @@ jobs:
           TAG_NAME="${{ env.CONTAINER_NAME }}:latest"
           $SSH_CMD "cmd /c \"C:\Windows\Temp\1-pull-image.bat $REMOTE_IMAGE $TAG_NAME\""
 
-      - name: 'Stop & Move Pre-existing Container'
+      - name: 'Isolate Pre-existing Container'
         run: |
-          $SSH_CMD "cmd /c \"C:\Windows\Temp\2-stop-container.bat ${{ env.CONTAINER_NAME }} ${{ env.OLD_CONTAINER_NAME }}\""
+          # Step A: Safe-rename the old running container to '_old' to unlock the active name slot
+          $SSH_CMD "cmd /c \"docker rename ${{ env.CONTAINER_NAME }} ${{ env.OLD_CONTAINER_NAME }} || echo No old active instance found to rename\""
 
       - name: 'Launch Active Container'
         run: |
-          $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_URI=${{ secrets.ONPREM_SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat ${{ env.CONTAINER_NAME }} ${{ inputs.PORT }}\""
-
+          # Step B: Free up the target port mapping by stopping the old container right before booting the new layer
+          $SSH_CMD "cmd /c \"docker stop ${{ env.OLD_CONTAINER_NAME }} || echo No active container to stop\""
+          
+          # Step C: Spin up your third script passing along the unique runtime version ID argument
+          $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_URI=${{ secrets.ONPREM_SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat ${{ env.CONTAINER_NAME }} ${{ inputs.PORT }} ${{ github.run_id }}\""
+      
       - name: 'Wait before health checks'
-        run: sleep 10
+        run: sleep 15
 
       - name: 'Health Check (Local via SSH)'
+        id: check
         run: |
           $SSH_CMD "cmd /c \"curl -s -o nul -w %%%{http_code} http://localhost:${{ inputs.PORT }}/actuator/health\"" > result.txt
           RESPONSE=$(cat result.txt | tr -d '\r')
+          echo "Health endpoint returned code status: $RESPONSE"
           if [ "$RESPONSE" -ne 200 ]; then exit 1; fi
 
+      # SUCCESS POST-ACTION: Clear old assets ONLY if health checks return 200 OK
+      - name: 'Commit Successful Deployment & Purge Old Assets'
+        if: success()
+        run: |
+          $SSH_CMD "cmd /c \"docker rm -f ${{ env.OLD_CONTAINER_NAME }} || echo Old container already removed\""
+          $SSH_CMD "cmd /c \"docker image prune -a -f\""
+
+      # FAILURE AUTOMATIC ROLLBACK: If health check drops, bring the old version back online instantly
+      - name: 'Execute Automatic Rollback to Previous Layer'
+        if: failure() && steps.check.outcome == 'failure'
+        run: |
+          echo "[CRITICAL WARNING] Health Check failed! Initiating rollback to secure environment states..."
+          $SSH_CMD "cmd /c \"docker stop ${{ env.CONTAINER_NAME }} || echo Execution wrapper context\""
+          $SSH_CMD "cmd /c \"docker start ${{ env.OLD_CONTAINER_NAME }} && docker rename ${{ env.OLD_CONTAINER_NAME }} ${{ env.CONTAINER_NAME }}\""
+      
       - name: 'Post-Deployment Server Cleanup'
         if: always()
         run: |
