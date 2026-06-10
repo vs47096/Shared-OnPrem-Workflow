@@ -147,6 +147,10 @@ jobs:
         run: |
           $SCP_CMD devops-scripts/scripts/*.bat ${{ secrets.ONPREM_SERVER_USER_ADMIN }}@${{ secrets.ONPREM_SERVER_SSH_HOST }}:C:/Windows/Temp/
 
+      - name: 'Authenticate Remote Docker Engine'
+        run: |
+          $SSH_CMD "cmd /c \"docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PAT }}\""
+
       - name: 'Pull & Tag Remote Image'
         run: |
           REMOTE_IMAGE="docker.io/${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_REPOSITORY_NAME }}:latest"
