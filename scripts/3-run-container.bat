@@ -1,17 +1,18 @@
 @echo off
-set CONTAINER_NAME=%1
-set PORT=%2
-set IMAGE_TAG=%3
+:: FIX: Using the ~ modifier strips the outer quotes passed from your SSH string safely
+set CONTAINER_NAME=%~1
+set TARGET_PORT=%~2
+set IMAGE_TAG=%~3
 
 echo =======================================================
 echo [Step 3/4] Launching Active Container Production Layer
 echo =======================================================
-echo Name: %CONTAINER_NAME%
-echo Mapping Port: %PORT% -> %PORT%
+echo Name:              %CONTAINER_NAME%
+echo Mapping Port:      %TARGET_PORT% -> %TARGET_PORT%
 echo Targeting Version: %IMAGE_TAG%
 
-:: Spin up container with dynamic environment keys
-docker run --name %CONTAINER_NAME% -d -p %%PORT%%:%%PORT%% ^
+:: Spin up container targeting your fresh safe variables
+docker run --name %CONTAINER_NAME% -d -p %TARGET_PORT%:%TARGET_PORT% ^
   --restart unless-stopped ^
   -e SPRING_DATASOURCE_URL=%ONPREM_SERVER_DB_URI% ^
   -e SPRING_DATASOURCE_USERNAME=%ONPREM_SERVER_DB_USERNAME% ^
