@@ -11,7 +11,7 @@ echo Mapping Port: %PORT% -> %PORT%
 echo Targeting Version: %IMAGE_TAG%
 
 :: Spin up container with dynamic environment keys
-docker run --name %CONTAINER_NAME% -d -p %PORT%:%PORT% ^
+docker run --name %CONTAINER_NAME% -d -p %%PORT%%:%%PORT%% ^
   --restart unless-stopped ^
   -e SPRING_DATASOURCE_URL=%ONPREM_SERVER_DB_URI% ^
   -e SPRING_DATASOURCE_USERNAME=%ONPREM_SERVER_DB_USERNAME% ^
