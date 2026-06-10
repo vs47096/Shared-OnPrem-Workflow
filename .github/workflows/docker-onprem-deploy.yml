@@ -216,14 +216,23 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     if: always()
-    needs: deploy
+    # Depends on get-secrets to get credentials, and deploy to ensure it runs at the very end
+    needs: [get-secrets, deploy]
     steps:
-      - name: 'Purge tags from Docker Hub'
+      # Checkout the shared scripts from your DevOps repo down to this Linux runner
+      - name: 'Checkout Shared Scripts'
+        uses: actions/checkout@v3
+        with:
+          repository: vs47096/Shared-OnPrem-Workflow
+          path: devops-scripts
+          token: ${{ secrets.VAULT_TOKEN }}
+
+      # Execute your new clean shell script directly on the Linux runner environment
+      - name: 'Execute Docker Hub Purge Script'
         run: |
-          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST https://hub.docker.com/v2/users/login/ -d '{"username": "'"${{ secrets.DOCKERHUB_USERNAME }}"'", "password": "'"${{ secrets.DOCKERHUB_TOKEN }}"'"}' | jq -r .token)
-          REPO="${{ secrets.DOCKERHUB_USERNAME }}/${{ needs.build.outputs.project_name }}"
-          RESPONSE=$(curl -s -H "Authorization: JWT ${TOKEN}" "https://hub.docker.com/v2/repositories/${REPO}/tags/?page_size=100")
-          TAGS=$(echo "$RESPONSE" | jq -r '.results[]?.name')
-          for TAG in $TAGS; do
-            curl -s -H "Authorization: JWT ${TOKEN}" -X DELETE "https://hub.docker.com/v2/repositories/${REPO}/tags/${TAG}/" > /dev/null 2>&1
-          done
+          chmod +x devops-scripts/scripts/5-dockerhub-cleanup.sh
+          
+          ./devops-scripts/scripts/5-dockerhub-cleanup.sh \
+            "${{ needs.get-secrets.outputs.DOCKER_USERNAME }}" \
+            "${{ needs.get-secrets.outputs.DOCKER_PAT }}" \
+            "${{ needs.get-secrets.outputs.DOCKER_REPOSITORY_NAME }}"
