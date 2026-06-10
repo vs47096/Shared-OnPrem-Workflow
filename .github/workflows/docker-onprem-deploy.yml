@@ -192,12 +192,10 @@ jobs:
       - name: 'Health Check (Local via SSH)'
         id: check
         run: |
-          # Since your shared script repository is pulled down, we can run it using bash over SSH.
-          # We pass the active application port and target container name as variables.
-          
-          $SSH_CMD "bash -s" < devops-scripts/scripts/6-health-check.sh "${{ inputs.PORT }}" "${{ env.CONTAINER_NAME }}"
-
-      # SUCCESS POST-ACTION: Clear old assets ONLY if health checks return 200 OK
+          # We call the uploaded batch file natively over our SSH command context
+          $SSH_CMD "cmd /c \"C:\Windows\Temp\6-health-check.bat ${{ inputs.PORT }} ${{ env.CONTAINER_NAME }}\""
+          # SUCCESS POST-ACTION: Clear old assets ONLY if health checks return 200 OK
+      
       - name: 'Commit Successful Deployment & Purge Old Assets'
         if: success()
         run: |
