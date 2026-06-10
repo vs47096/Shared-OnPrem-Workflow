@@ -37,9 +37,9 @@ jobs:
   # ==============================================================================
   build:
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'test' }}
     env:
-      FINAL_PROFILE: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+      FINAL_PROFILE: ${{ github.ref_name == 'main' && 'prod' || 'test' }}
     outputs:
       project_name: ${{ steps.get_project.outputs.project_name }}
 
@@ -95,9 +95,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'test' }}
     env:
-      DEPLOY_ENV: ${{ github.ref_name == 'main' && 'Prod' || 'Test' }}
+      DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'test' }}
       PROJECT_NAME: ${{ needs.build.outputs.project_name }}
       
     steps:
