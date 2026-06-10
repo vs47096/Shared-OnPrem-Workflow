@@ -8,7 +8,7 @@ echo =======================================================
 echo [Step 3/4] Launching Active Container Production Layer
 echo =======================================================
 echo Name:              %CONTAINER_NAME%
-echo Mapping Port:      %TARGET_PORT% -> %TARGET_PORT%
+echo Mapping Port:      %TARGET_PORT%
 echo Targeting Version: %IMAGE_TAG%
 
 :: Spin up container targeting your fresh safe variables
