@@ -14,7 +14,7 @@ echo Targeting Version: %IMAGE_TAG%
 :: Spin up container targeting your fresh safe variables
 docker run --name %CONTAINER_NAME% -d -p %TARGET_PORT%:%TARGET_PORT% ^
   --restart unless-stopped ^
-  -e SPRING_DATASOURCE_URL=%ONPREM_SERVER_DB_URI% ^
+  -e DB_HOST=%ONPREM_SERVER_DB_HOST% ^
   -e SPRING_DATASOURCE_USERNAME=%ONPREM_SERVER_DB_USERNAME% ^
   -e SPRING_DATASOURCE_PASSWORD=%ONPREM_SERVER_DB_PASSWORD% ^
   -e SPRING_JWT_SECRET=%APP_JWT_SECRET% ^
