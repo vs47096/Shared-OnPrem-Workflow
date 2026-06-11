@@ -20,7 +20,7 @@ on:
         required: true
       ONPREM_SERVER_DB_PASSWORD:
         required: true
-      ONPREM_SERVER_DB_URI:
+      ONPREM_SERVER_DB_HOST:
         required: true
       APP_JWT_SECRET:
         required: true
@@ -193,7 +193,7 @@ jobs:
             
             # Step C: Spin up your third script passing along the unique runtime version ID argument
             # FIX: Explicitly wrapped parameters in escaped double quotes
-            $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_URI=${{ secrets.ONPREM_SERVER_DB_URI }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat \"${{ env.CONTAINER_NAME }}\" \"${{ vars.PORT }}\" \"${{ github.run_id }}\"\""
+            $SSH_CMD "cmd /c \"set ONPREM_SERVER_DB_HOST=${{ secrets.ONPREM_SERVER_DB_HOST }} && set ONPREM_SERVER_DB_USERNAME=${{ secrets.ONPREM_SERVER_DB_USERNAME }} && set ONPREM_SERVER_DB_PASSWORD=${{ secrets.ONPREM_SERVER_DB_PASSWORD }} && set APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }} && set DEPLOY_ENV=${{ env.DEPLOY_ENV }} && C:\Windows\Temp\3-run-container.bat \"${{ env.CONTAINER_NAME }}\" \"${{ vars.PORT }}\" \"${{ github.run_id }}\"\""
       
       - name: 'Health Check (Local via SSH)'
         id: check
