@@ -57,6 +57,21 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
 
+      - name: 'Generate Frontend .env File Dynamically'
+        shell: bash
+        run: |
+          # Determine target file based on the active profile identifier
+          TARGET_FILE="src/main/frontend/.env.${{ env.FINAL_PROFILE }}"
+          
+          echo "Creating runtime parameters file at: $TARGET_FILE"
+          
+          # Write values in the exact format required by your React package.json layout
+          echo "REACT_APP_BASE_URL=${{ vars.APP_URL }}" > "$TARGET_FILE"
+          echo "REACT_APP_ENV=${{ env.FINAL_PROFILE }}" >> "$TARGET_FILE"
+          
+          echo "--- Verification Check ---"
+          cat "$TARGET_FILE"
+
       - name: 'Build with Maven'
         run: mvn clean package -DskipTests -P${{ env.FINAL_PROFILE }}
 
