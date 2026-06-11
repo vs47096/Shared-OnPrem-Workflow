@@ -1,6 +1,6 @@
 @echo off
 echo =======================================================
-echo       Environment Housekeeping & Fragment Cleanup
+echo       Environment Housekeeping and Cleanup
 echo =======================================================
 
 echo Removing stopped containers...
