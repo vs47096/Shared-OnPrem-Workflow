@@ -213,9 +213,13 @@ jobs:
         if: failure() && steps.check.outcome == 'failure'
         run: |
           echo "[CRITICAL WARNING] Health Check failed! Initiating rollback to secure environment states..."
-          $SSH_CMD "cmd /c \"docker stop ${{ env.CONTAINER_NAME }} || echo Execution wrapper context\""
-          $SSH_CMD "cmd /c \"docker start ${{ env.OLD_CONTAINER_NAME }} && docker rename ${{ env.OLD_CONTAINER_NAME }} ${{ env.CONTAINER_NAME }}\""
-      
+          
+          # 1. Kill and remove the broken new version to clear the port namespace
+          $SSH_CMD "cmd /c \"docker stop ${{ env.CONTAINER_NAME }} && docker rm -f ${{ env.CONTAINER_NAME }} || echo Cleanup bypass context\""
+    
+          # 2. Smart Rollback: Only attempt to restore the old container if it exists on disk
+          $SSH_CMD "cmd /c \"docker inspect ${{ env.CONTAINER_NAME }}_old >nul 2>&1 && (echo [ROLLBACK] Restoring previous operational container... && docker start ${{ env.CONTAINER_NAME }}_old && docker rename ${{ env.CONTAINER_NAME }}_old ${{ env.CONTAINER_NAME }}) || (echo [NOTICE] First deployment detected. No historical backup container exists to roll back to.)\""
+            
       - name: 'Post-Deployment Server Cleanup'
         if: always()
         run: |
