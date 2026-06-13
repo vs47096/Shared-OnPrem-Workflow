@@ -218,7 +218,7 @@ jobs:
           $SSH_CMD "cmd /c \"docker stop ${{ env.CONTAINER_NAME }} && docker rm -f ${{ env.CONTAINER_NAME }} || echo Cleanup bypass context\""
     
           # 2. Smart Rollback: Only attempt to restore the old container if it exists on disk
-          $SSH_CMD "cmd /c \"docker inspect ${{ env.CONTAINER_NAME }}_old >nul 2>&1 && (echo [ROLLBACK] Restoring previous operational container... && docker start ${{ env.CONTAINER_NAME }}_old && docker rename ${{ env.CONTAINER_NAME }}_old ${{ env.CONTAINER_NAME }}) || (echo [NOTICE] First deployment detected. No historical backup container exists to roll back to.)\""
+          $SSH_CMD "cmd /c \"docker inspect ${{ env.CONTAINER_NAME }}_old >nul 2>&1 && (echo [ROLLBACK] Restoring previous operational container... && docker start ${{ env.CONTAINER_NAME }}_old && docker rename ${{ env.CONTAINER_NAME }}_old ${{ env.CONTAINER_NAME }}) || (echo [NOTICE] No historical backup container exists to roll back to.)\""
             
       - name: 'Post-Deployment Server Cleanup'
         if: always()
